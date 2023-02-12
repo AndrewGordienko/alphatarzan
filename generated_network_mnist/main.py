@@ -2,7 +2,7 @@ import numpy as np
 from copy import deepcopy
 from tqdm import tqdm
 from network_generation import Network
-from in2 import Passing
+from network_functionality import Passing
 from keras.datasets import mnist
 
 batch_size = 5
