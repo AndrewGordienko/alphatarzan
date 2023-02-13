@@ -8,4 +8,4 @@ mnist_nodes is a fixed size neural network with the backpropogation code tested 
 \
 \
 neat_backprop uses NEAT and backpropogation for MNIST 
-\
+
