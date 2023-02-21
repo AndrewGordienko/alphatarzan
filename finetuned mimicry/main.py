@@ -6,10 +6,10 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+import math
 
 from copy import deepcopy
 from network_functionality import Passing
-from noise_class import Noise
 from replay_buffer_class import ReplayBuffer
 
 filehandler = open("best_network.obj", 'rb') 
@@ -17,14 +17,14 @@ actor_network = pickle.load(filehandler)
 env = gym.make("BipedalWalker-v3")
 
 passing = Passing()
-episodes = 100
+episodes = 101
 best_reward = float("-inf")
 
 FC1_DIMS = 1024
 FC2_DIMS = 512
-LEARNING_RATE = 0.0001
+LEARNING_RATE = 0.001
 BATCH_SIZE = 64
-GAMMA = 0.95
+GAMMA = 0.99
 DEVICE = torch.device("cpu")
 
 best_reward = -130
@@ -59,7 +59,6 @@ class critic_network(torch.nn.Module):
 class Agent:
     def __init__(self):
         self.memory = ReplayBuffer()
-        self.noise = Noise(env.action_space)
         self.tau = 1e-2
         self.loss_recorded = 0
 
@@ -86,48 +85,52 @@ class Agent:
         states_ = torch.tensor(states_, dtype=torch.float32).to(DEVICE)
         dones = torch.tensor(dones, dtype=torch.bool).to(DEVICE)
 
-        target_actions = []
+        values = self.critic(states, actions)
+
+        # use target actor
+        actions_ = []
         for i in range(BATCH_SIZE):
             passing.network = self.actor_target.network
-            state_ = states_[i][4:8].unsqueeze(0)
-            target_actions.append(passing.forward(state_))
-        target_actions = torch.tensor(target_actions).to(DEVICE)
+            actions_.append(passing.forward([states_[i][4:8]]))
+        actions_ = torch.tensor(actions_)
         
-        critic_value_ = self.critic_target.forward(states_, target_actions)
-        critic_value = self.critic.forward(states, actions)
+        values_ = self.critic_target(states_, actions_)
+        values_[dones] = 0.0
 
-        target = []
-        for j in range(BATCH_SIZE):
-            target.append(rewards[j] + GAMMA * critic_value_[j] * dones[j])
-        
-        target = torch.tensor(target).to(DEVICE)
-        target = target.view(BATCH_SIZE, 1)
+        target = rewards + GAMMA * values_ 
+        td = target - values       
 
         self.critic.train()
+        critic_loss = (td**2).mean()
+        
         self.critic.optimizer.zero_grad()
-        critic_loss = F.mse_loss(target, critic_value)
         critic_loss.backward()
         self.critic.optimizer.step()
-        self.critic.eval()
 
-        mu = []
         for i in range(BATCH_SIZE):
-            passing.network = self.actor.network
-            state = states[i][4:8].unsqueeze(0)
-            mu.append(passing.forward(state))
-        mu = torch.tensor(mu).to(DEVICE)
+            retrospective_action = np.array(self.choose_action([states[i][4:8]])).astype(np.float32)
+            retrospective_action = torch.tensor(retrospective_action)
 
-        actor_loss = -self.critic.forward(states, mu)
-        actor_loss = torch.mean(actor_loss)
-        actor_loss = np.array([actor_loss.item(), actor_loss.item(), actor_loss.item(), actor_loss.item()])
+            retrospective_value = self.critic(states[i].unsqueeze(0), retrospective_action.unsqueeze(0))
+            actor_loss = -retrospective_value
+
+            error = retrospective_action * actor_loss
+
+            passing.network = self.actor.network
+            passing.backward(error)
+            self.actor.network = passing.network
+
+            
+        
+        """
+        error = actor_loss.item()
+        actor_loss = np.array([error, error, error, error])
         passing.network = self.actor.network
 
         passing.backward(actor_loss)
         self.actor.network = passing.network
-        self.loss_recorded = actor_loss
-        #actor_loss.backward()
+        """
 
-        #print(actor_loss)
     
         self.update_network_parameters()
     
@@ -153,7 +156,7 @@ class Agent:
                     self.actor.network[layer_idx][node_idx].connections[connection_idx].weight = tau * self.actor.network[layer_idx][node_idx].connections[connection_idx].weight + \
                         (1-tau) * self.actor_target.network[layer_idx][node_idx].connections[connection_idx].weight
                     
-        self.actor_target = deepcopy(self.actor)
+        self.actor_target = self.actor
 
 
 agent = Agent()
@@ -167,13 +170,10 @@ for episode in range(1, episodes):
         env.render()
         step += 1
 
-        action = agent.choose_action([state[4:8]])
+        action = np.array(agent.choose_action([state[4:8]])).astype(np.float32)
         #action = env.action_space.sample()
-        action = agent.noise.get_action(action, step)
+        #action = agent.noise.get_action(action, step)
 
-        if np.isnan(action).any():
-            print(agent.loss_recorded)
-            print(action)
 
         #if np.isnan(action).any():
             #action = agent.choose_action([state[4:8]])
