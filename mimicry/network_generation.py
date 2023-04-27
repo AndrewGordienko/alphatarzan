@@ -170,7 +170,7 @@ class Network():
     def mutation(self):
         choice = random.randint(0, 10)
         if choice == 0:
-            self.mutate_link() # problem
+            self.mutate_link() 
         if choice == 1:
             self.mutate_node()
         if choice == 2 or choice == 5 or choice == 8:
